@@ -20,11 +20,39 @@ options = HandLandmarkerOptions(
     num_hands = 2
 )
 
+# Drawing up hte lines 
+HAND_CONNECTIONS = [
+    (0,1),(1,2),(2,3),(3,4), # Thumb
+    (0,5),(5,6),(6,7),(7,8), # Index
+    (0,9),(9,10),(10,11),(11,12), # Middle
+    (0,13),(13,14),(14,15),(15,16), # Ring
+    (0,17),(17,18),(18,19),(19,20), # Pinky
+    (5,9),(9,13),(13,17) # Palm connections 
+]
+
+
+# Draw landmarks on the frame
+def draw_landmarks(frame, hand):
+    h,w,_=frame.shape
+    for start,end in HAND_CONNECTIONS:
+        x1 = int(hand[start].x * w)
+        y1 = int(hand[start].y * h)
+        x2 = int(hand[end].x * w)
+        y2 = int(hand[end].y * h)
+        cv.line(frame, (x1,y1), (x2,y2),(255,255,255), 2)
+
+        # Draw dots on top of lines
+        for landmark in hand:
+            x = int(landmark.x * w) 
+            y = int(landmark.y * h)
+            cv.circle(frame, (x,y), 5, (0,255,0), -1)
+
 # 3. Open camera
 cam = cv.VideoCapture(0)
 if not cam.isOpened():
     print("Cannot open camera")
     exit() 
+
 
 # 4. Main loop 
 with HandLandmarker.create_from_options(options) as landmarker:
@@ -43,18 +71,14 @@ with HandLandmarker.create_from_options(options) as landmarker:
         mp_image= mp.Image(image_format=mp.ImageFormat.SRGB, data= rgb)
         result = landmarker.detect(mp_image)
 
-
-        # Draw landmarks on the frame
+        # Draw landmarks and connections
         if result.hand_landmarks:
             for hand in result.hand_landmarks:
-                h,w,_=frame.shape
-                for landmark in hand:
-                    x = int(landmark.x * w) 
-                    y = int(landmark.y * h)
-                    cv.circle(frame, (x,y), 5, (0,255,0), -1)
+                draw_landmarks(frame, hand)
+
         cv.imshow('We Drew Hands', frame)
         if cv.waitKey(1) == ord('q'):
-            print("Exiting...")
+            print("\033[32mExiting.... \033[0m")
             break 
 
           
