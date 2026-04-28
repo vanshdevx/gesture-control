@@ -1,4 +1,5 @@
 import cv2 as cv
+import pyautogui
 import mediapipe as mp
 from mediapipe.tasks.python.vision import HandLandmarker, HandLandmarkerOptions, RunningMode
 from mediapipe.tasks import python as mp_tasks
@@ -30,6 +31,8 @@ HAND_CONNECTIONS = [
     (5,9),(9,13),(13,17) # Palm connections 
 ]
 
+pyautogui.FAILSAFE = False
+screen_w, screen_h = pyautogui.size()
 
 # Draw landmarks on the frame
 def draw_landmarks(frame, hand):
@@ -42,10 +45,11 @@ def draw_landmarks(frame, hand):
         cv.line(frame, (x1,y1), (x2,y2),(255,255,255), 2)
 
         # Draw dots on top of lines
-        for landmark in hand:
-            x = int(landmark.x * w) 
-            y = int(landmark.y * h)
-            cv.circle(frame, (x,y), 5, (0,255,0), -1)
+    for landmark in hand:
+        x = int(landmark.x * w) 
+        y = int(landmark.y * h)
+        cv.circle(frame, (x,y), 5, (0,255,0), -1)
+
 
 # 3. Open camera
 cam = cv.VideoCapture(0)
@@ -75,6 +79,11 @@ with HandLandmarker.create_from_options(options) as landmarker:
         if result.hand_landmarks:
             for hand in result.hand_landmarks:
                 draw_landmarks(frame, hand)
+                
+                indexTip = hand[8]
+                cursor_x = int(indexTip.x * screen_w)
+                cursor_y = int(indexTip.y * screen_h)
+                pyautogui.moveTo(cursor_x, cursor_y,duration=0)
 
         cv.imshow('We Drew Hands', frame)
         if cv.waitKey(1) == ord('q'):
