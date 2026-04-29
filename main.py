@@ -1,4 +1,5 @@
 import cv2 as cv
+import time 
 import pyautogui
 import mediapipe as mp
 from mediapipe.tasks.python.vision import HandLandmarker, HandLandmarkerOptions, RunningMode
@@ -13,13 +14,15 @@ if not os.path.exists(model_path):
         model_path
     )
 
-# 2. Setup MediaPipe
+# 2. Setup 
 base_options = mp_tasks.BaseOptions(model_asset_path=model_path)
 options = HandLandmarkerOptions(
     base_options=base_options,
     running_mode = RunningMode.IMAGE,
     num_hands = 2
 )
+
+
 
 # Drawing up hte lines 
 HAND_CONNECTIONS = [
@@ -31,8 +34,6 @@ HAND_CONNECTIONS = [
     (5,9),(9,13),(13,17) # Palm connections 
 ]
 
-pyautogui.FAILSAFE = False
-screen_w, screen_h = pyautogui.size()
 
 # Draw landmarks on the frame
 def draw_landmarks(frame, hand):
@@ -58,6 +59,26 @@ if not cam.isOpened():
     exit() 
 
 
+# Set up pyautogui
+pyautogui.FAILSAFE = False
+pyautogui.PAUSE = 0
+screen_w, screen_h = pyautogui.size()
+
+# Smoothing variables
+prev_x, prev_y = 0, 0
+SMOOTHING = 4
+
+#Zone - Mapping 
+ZONE_LEFT   = 300
+ZONE_RIGHT  = 1620
+ZONE_TOP    = 100
+ZONE_BOTTOM = 900
+
+# Pinching to click variables
+pinch_threshold = 40
+last_click = 0 
+COOLDOWN = 1.0 
+
 # 4. Main loop 
 with HandLandmarker.create_from_options(options) as landmarker:
     while cam.isOpened():
@@ -75,15 +96,37 @@ with HandLandmarker.create_from_options(options) as landmarker:
         mp_image= mp.Image(image_format=mp.ImageFormat.SRGB, data= rgb)
         result = landmarker.detect(mp_image)
 
-        # Draw landmarks and connections
+        # Detect hand to draw landmarks and move mouse 
         if result.hand_landmarks:
             for hand in result.hand_landmarks:
                 draw_landmarks(frame, hand)
-                
+                h,w,_=frame.shape
+                thumb = hand[4]
                 indexTip = hand[8]
-                cursor_x = int(indexTip.x * screen_w)
-                cursor_y = int(indexTip.y * screen_h)
-                pyautogui.moveTo(cursor_x, cursor_y,duration=0)
+                thumb_x = int(thumb.x * w)
+                thumb_y = int(thumb.y * h)
+                indexTip_x = int(indexTip.x * w)
+                indexTip_y = int(indexTip.y * h)
+                mapped_x = (indexTip_x-ZONE_LEFT)/ (ZONE_RIGHT-ZONE_LEFT) * screen_w
+                mapped_y = (indexTip_y-ZONE_TOP) / (ZONE_BOTTOM-ZONE_TOP) * screen_h
+                distance = ((thumb_x - indexTip_x) ** 2 + (thumb_y - indexTip_y) ** 2) ** 0.5
+
+                # Move the mouse pointer with smoothing 
+                cursor_x = max(0, min(screen_w, mapped_x))
+                cursor_y = max(0, min(screen_h, mapped_y))
+                new_x = prev_x + (cursor_x - prev_x) / SMOOTHING
+                new_y = prev_y + (cursor_y - prev_y) / SMOOTHING
+                prev_x, prev_y = new_x, new_y
+                pyautogui.moveTo(new_x, new_y,duration=0)
+
+                # Adding the abilitiy of click by pinching 
+                if distance < pinch_threshold:
+                    now = time.time()
+                    if now - last_click > COOLDOWN:
+                        pyautogui.click()
+                        last_click = now
+                    cv.circle(frame, (indexTip_x, indexTip_y), 15, (0,0,255), -1)   
+
 
         cv.imshow('We Drew Hands', frame)
         if cv.waitKey(1) == ord('q'):
