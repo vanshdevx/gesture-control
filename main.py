@@ -19,7 +19,7 @@ base_options = mp_tasks.BaseOptions(model_asset_path=model_path)
 options = HandLandmarkerOptions(
     base_options=base_options,
     running_mode = RunningMode.IMAGE,
-    num_hands = 2
+    num_hands = 1
 )
 
 
@@ -103,6 +103,9 @@ with HandLandmarker.create_from_options(options) as landmarker:
                 h,w,_=frame.shape
                 thumb = hand[4]
                 indexTip = hand[8]
+                middleTip = hand[12]
+                middle_x = int(middleTip.x * w)
+                middle_y = int(middleTip.y * h)
                 thumb_x = int(thumb.x * w)
                 thumb_y = int(thumb.y * h)
                 indexTip_x = int(indexTip.x * w)
@@ -110,6 +113,7 @@ with HandLandmarker.create_from_options(options) as landmarker:
                 mapped_x = (indexTip_x-ZONE_LEFT)/ (ZONE_RIGHT-ZONE_LEFT) * screen_w
                 mapped_y = (indexTip_y-ZONE_TOP) / (ZONE_BOTTOM-ZONE_TOP) * screen_h
                 distance = ((thumb_x - indexTip_x) ** 2 + (thumb_y - indexTip_y) ** 2) ** 0.5
+                distance_middle = ((thumb_x - middle_x) ** 2 + (thumb_y - middle_y) ** 2) ** 0.5
 
                 # Move the mouse pointer with smoothing 
                 cursor_x = max(0, min(screen_w, mapped_x))
@@ -125,7 +129,13 @@ with HandLandmarker.create_from_options(options) as landmarker:
                     if now - last_click > COOLDOWN:
                         pyautogui.click()
                         last_click = now
-                    cv.circle(frame, (indexTip_x, indexTip_y), 15, (0,0,255), -1)   
+                    cv.circle(frame, (indexTip_x, indexTip_y), 15, (0,0,255), -1) 
+                elif distance_middle < pinch_threshold:
+                    now = time.time()
+                    if now - last_click > COOLDOWN:
+                        pyautogui.rightClick()
+                        last_click = now
+                    cv.circle(frame, (middle_x, middle_y), 15, (255,0,0), -1)
 
 
         cv.imshow('We Drew Hands', frame)
