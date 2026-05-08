@@ -91,6 +91,7 @@ with HandLandmarker.create_from_options(options) as landmarker:
         # Flip the frame horizontally 
         frame = cv.flip(frame,1)
 
+
         # Convert to mediapipe image 
         rgb = cv.cvtColor(frame,cv.COLOR_BGR2RGB)
         mp_image= mp.Image(image_format=mp.ImageFormat.SRGB, data= rgb)
