@@ -79,6 +79,7 @@ pinch_threshold = 40
 last_click = 0 
 COOLDOWN = 1.0 
 
+prev_index_y = 0    
 # 4. Main loop 
 with HandLandmarker.create_from_options(options) as landmarker:
     while cam.isOpened():
@@ -116,6 +117,10 @@ with HandLandmarker.create_from_options(options) as landmarker:
                 distance = ((thumb_x - indexTip_x) ** 2 + (thumb_y - indexTip_y) ** 2) ** 0.5
                 distance_middle = ((thumb_x - middle_x) ** 2 + (thumb_y - middle_y) ** 2) ** 0.5
 
+                #Scroll detection when index and middle fingers are up 
+                index_up = indexTip_y < int(h*0.5)
+                middle_up = middle_y < int(h*0.5)
+
                 # Move the mouse pointer with smoothing 
                 cursor_x = max(0, min(screen_w, mapped_x))
                 cursor_y = max(0, min(screen_h, mapped_y))
@@ -123,6 +128,7 @@ with HandLandmarker.create_from_options(options) as landmarker:
                 new_y = prev_y + (cursor_y - prev_y) / SMOOTHING
                 prev_x, prev_y = new_x, new_y
                 pyautogui.moveTo(new_x, new_y,duration=0)
+                
 
                 # Adding the abilitiy of click by pinching 
                 if distance < pinch_threshold:
@@ -137,8 +143,17 @@ with HandLandmarker.create_from_options(options) as landmarker:
                         pyautogui.rightClick()
                         last_click = now
                     cv.circle(frame, (middle_x, middle_y), 15, (255,0,0), -1)
-
-
+                
+                # Scroll when index and middle fingers are up
+                elif index_up and middle_up : 
+                    delta_y = prev_index_y - indexTip_y
+                    if abs(delta_y) > 5:
+                        pyautogui.scroll(int(delta_y / 20))
+                    # ── NEW ── scroll indicator
+                    cv.putText(frame, "SCROLL", (indexTip_x - 30, indexTip_y - 20),
+                               cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                    
+                prev_index_y = indexTip_y
         cv.imshow('We Drew Hands', frame)
         if cv.waitKey(1) == ord('q'):
             print("\033[32mExiting.... \033[0m")
