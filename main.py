@@ -1,10 +1,12 @@
 import cv2 as cv
 import time 
+import math
 import pyautogui
 import mediapipe as mp
 from mediapipe.tasks.python.vision import HandLandmarker, HandLandmarkerOptions, RunningMode
 from mediapipe.tasks import python as mp_tasks
-import os, urllib.request
+from collections import deque
+import os, subprocess, urllib.request
 
 # 1. Download model if needed
 model_path = "hand_landmarker.task"
@@ -52,6 +54,55 @@ def draw_landmarks(frame, hand):
         cv.circle(frame, (x,y), 5, (0,255,0), -1)
 
 
+def detect_circle_gesture(points):
+    if len(points) < 12:
+        return None
+    cx = sum(x for x, _ in points) / len(points)
+    cy = sum(y for _, y in points) / len(points)
+    angles = [math.atan2(y - cy, x - cx) for x, y in points]
+    total_delta = 0.0
+    for i in range(1, len(angles)):
+        delta = angles[i] - angles[i - 1]
+        if delta <= -math.pi:
+            delta += 2 * math.pi
+        elif delta > math.pi:
+            delta -= 2 * math.pi
+        total_delta += delta
+    rotations = abs(total_delta) / (2 * math.pi)
+    if rotations < 1.0:
+        return None
+    direction = 'ccw' if total_delta > 0 else 'cw'
+    return direction, rotations
+
+
+def get_mac_volume():
+    try:
+        out = subprocess.check_output([
+            'osascript', '-e', 'output volume of (get volume settings)'
+        ])
+        return int(out.decode('utf-8').strip())
+    except Exception:
+        return None
+
+
+def set_mac_volume(value):
+    value = max(0, min(100, int(value)))
+    try:
+        subprocess.call(['osascript', '-e', f'set volume output volume {value}'])
+    except Exception:
+        pass
+
+
+def adjust_volume(direction, step=5):
+    current = get_mac_volume()
+    if current is None:
+        return
+    if direction == 'up':
+        set_mac_volume(current + step)
+    else:
+        set_mac_volume(current - step)
+
+
 # 3. Open camera
 cam = cv.VideoCapture(0)
 if not cam.isOpened():
@@ -78,6 +129,12 @@ ZONE_BOTTOM = 900
 pinch_threshold = 40
 last_click = 0 
 COOLDOWN = 1.0 
+
+# Volume control via circular index motion
+index_history = deque(maxlen=40)
+last_volume_action = 0
+VOLUME_COOLDOWN = 0.5
+VOLUME_STEP_PER_CIRCLE = 8
 
 prev_index_y = 0    
 # 4. Main loop 
@@ -122,6 +179,9 @@ with HandLandmarker.create_from_options(options) as landmarker:
                 index_up = indexTip.y < hand[6].y
                 middle_up = middleTip.y < hand[10].y
 
+                index_history.append((indexTip_x, indexTip_y))
+                circle_gesture = detect_circle_gesture(index_history)
+
                 # Move the mouse pointer with smoothing 
                 cursor_x = max(0, min(screen_w, mapped_x))
                 cursor_y = max(0, min(screen_h, mapped_y))
@@ -144,6 +204,19 @@ with HandLandmarker.create_from_options(options) as landmarker:
                         pyautogui.rightClick()
                         last_click = now
                     cv.circle(frame, (middle_x, middle_y), 15, (255,0,0), -1)
+                elif circle_gesture and index_up and not middle_up:
+                    direction, rotations = circle_gesture
+                    now = time.time()
+                    if now - last_volume_action > VOLUME_COOLDOWN:
+                        amount = max(1, int(round(rotations * VOLUME_STEP_PER_CIRCLE)))
+                        if direction == 'cw':
+                            adjust_volume('down', amount)
+                        else:
+                            adjust_volume('up', amount)
+                        last_volume_action = now
+                        index_history.clear()
+                    cv.putText(frame, f"VOL {direction.upper()} {rotations:.1f}", (indexTip_x - 60, indexTip_y - 40),
+                               cv.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
                 
                 # Scroll when index and middle fingers are up
                 elif index_up and middle_up : 
