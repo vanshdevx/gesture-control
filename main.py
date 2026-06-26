@@ -19,7 +19,7 @@ base_options = mp_tasks.BaseOptions(model_asset_path=model_path)
 options = HandLandmarkerOptions(
     base_options=base_options,
     running_mode = RunningMode.IMAGE,
-    num_hands = 1
+    num_hands = 2
 )
 
 
@@ -117,9 +117,10 @@ with HandLandmarker.create_from_options(options) as landmarker:
                 distance = ((thumb_x - indexTip_x) ** 2 + (thumb_y - indexTip_y) ** 2) ** 0.5
                 distance_middle = ((thumb_x - middle_x) ** 2 + (thumb_y - middle_y) ** 2) ** 0.5
 
-                #Scroll detection when index and middle fingers are up 
-                index_up = indexTip_y < int(h*0.5)
-                middle_up = middle_y < int(h*0.5)
+                # Scroll detection when index and middle fingers are up
+                # Use the tip and pip landmarks to confirm the finger is extended.
+                index_up = indexTip.y < hand[6].y
+                middle_up = middleTip.y < hand[10].y
 
                 # Move the mouse pointer with smoothing 
                 cursor_x = max(0, min(screen_w, mapped_x))
