@@ -54,6 +54,7 @@ def draw_landmarks(frame, hand):
         cv.circle(frame, (x,y), 5, (0,255,0), -1)
 
 
+#detect circular gesture based on the index finger's movement
 def detect_circle_gesture(points):
     if len(points) < 12:
         return None
