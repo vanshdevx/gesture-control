@@ -54,7 +54,6 @@ def draw_landmarks(frame, hand):
         cv.circle(frame, (x,y), 5, (0,255,0), -1)
 
 
-#detect circular gesture based on the index finger's movement
 def detect_circle_gesture(points):
     if len(points) < 12:
         return None
@@ -104,6 +103,164 @@ def adjust_volume(direction, step=5):
         set_mac_volume(current - step)
 
 
+MEDIA_APPS = ('Spotify', 'Music', 'VLC')
+media_permission_warned = False
+media_state_cache = {'playing': None, 'at': 0.0}
+
+
+def draw_label(frame, text, x, y, color, scale=0.85, thickness=3):
+    font = cv.FONT_HERSHEY_SIMPLEX
+    (tw, th), baseline = cv.getTextSize(text, font, scale, thickness)
+    px, py = int(x - tw / 2), int(y)
+    outline_thickness = thickness + 2
+    for dx, dy in ((-2, 0), (2, 0), (0, -2), (0, 2), (-1, -1), (1, 1), (-1, 1), (1, -1)):
+        cv.putText(
+            frame, text, (px + dx, py + dy), font, scale, (0, 0, 0),
+            outline_thickness, cv.LINE_AA,
+        )
+    cv.putText(frame, text, (px, py), font, scale, color, thickness, cv.LINE_AA)
+
+
+def is_app_running(app_name):
+    try:
+        out = subprocess.check_output(
+            ['osascript', '-e', f'application "{app_name}" is running'],
+            stderr=subprocess.DEVNULL,
+        )
+        return out.decode('utf-8').strip() == 'true'
+    except Exception:
+        return False
+
+
+def get_media_playback_state():
+    now = time.time()
+    if now - media_state_cache['at'] < 0.4:
+        return media_state_cache['playing']
+
+    playing = None
+    for app in MEDIA_APPS:
+        if not is_app_running(app):
+            continue
+        try:
+            if app == 'VLC':
+                script = 'tell application "VLC" to playing'
+            else:
+                script = f'tell application "{app}" to player state as string'
+            out = subprocess.check_output(
+                ['osascript', '-e', script],
+                stderr=subprocess.DEVNULL,
+                timeout=1,
+            ).decode('utf-8').strip().lower()
+            if app == 'VLC':
+                playing = out == 'true'
+            else:
+                playing = out == 'playing'
+            break
+        except Exception:
+            continue
+
+    media_state_cache['playing'] = playing
+    media_state_cache['at'] = now
+    return playing
+
+
+def toggle_playing_media():
+    global media_permission_warned
+
+    for app in MEDIA_APPS:
+        if not is_app_running(app):
+            continue
+        try:
+            subprocess.run(
+                ['osascript', '-e', f'tell application "{app}" to playpause'],
+                check=True,
+                capture_output=True,
+                timeout=1,
+            )
+            if media_state_cache['playing'] is not None:
+                media_state_cache['playing'] = not media_state_cache['playing']
+            media_state_cache['at'] = time.time()
+            return True
+        except Exception:
+            continue
+
+    try:
+        result = subprocess.run(
+            ['osascript', '-e', 'tell application "System Events" to key code 16'],
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+        if result.returncode == 0:
+            if media_state_cache['playing'] is not None:
+                media_state_cache['playing'] = not media_state_cache['playing']
+            media_state_cache['at'] = time.time()
+            return True
+        if not media_permission_warned and '1002' in result.stderr:
+            media_permission_warned = True
+            print(
+                '\033[33mMedia pause needs Accessibility permission for system-wide control.\033[0m\n'
+                'System Settings → Privacy & Security → Accessibility → enable Terminal or Cursor.\n'
+                'Or play media in Spotify, Music, or VLC — those work without it.'
+            )
+    except Exception:
+        pass
+    return False
+
+
+def landmark_distance(a, b):
+    return math.hypot(a.x - b.x, a.y - b.y)
+
+
+def is_finger_extended(hand, tip, pip, mcp, palm_width):
+    return landmark_distance(hand[tip], hand[mcp]) > palm_width * 0.48
+
+
+def is_click_pinch(hand, pinch_distance_px, pinch_threshold):
+    if pinch_distance_px >= pinch_threshold:
+        return False
+    palm_width = landmark_distance(hand[5], hand[17])
+    if palm_width <= 0:
+        return False
+    return is_finger_extended(hand, 8, 6, 5, palm_width)
+
+
+def is_fist(hand):
+    palm_width = landmark_distance(hand[5], hand[17])
+    if palm_width <= 0:
+        return False
+
+    fingers = [(8, 6, 5), (12, 10, 9), (16, 14, 13), (20, 18, 17)]
+    if any(is_finger_extended(hand, tip, pip, mcp, palm_width) for tip, pip, mcp in fingers):
+        return False
+
+    palm_center_x = sum(hand[i].x for i in (0, 5, 9, 13, 17)) / 5.0
+    palm_center_y = sum(hand[i].y for i in (0, 5, 9, 13, 17)) / 5.0
+    tip_distances = [
+        math.hypot(hand[tip].x - palm_center_x, hand[tip].y - palm_center_y)
+        for tip in (8, 12, 16, 20)
+    ]
+    avg_tip_dist = sum(tip_distances) / len(tip_distances)
+    if avg_tip_dist > palm_width * 0.60:
+        return False
+    if any(dist > palm_width * 0.72 for dist in tip_distances):
+        return False
+
+    thumb_dist = math.hypot(hand[4].x - palm_center_x, hand[4].y - palm_center_y)
+    if thumb_dist > palm_width * 0.75 and landmark_distance(hand[4], hand[8]) > palm_width * 0.55:
+        return False
+
+    finger_spread = (
+        landmark_distance(hand[8], hand[12]) +
+        landmark_distance(hand[12], hand[16]) +
+        landmark_distance(hand[16], hand[20])
+    )
+    if finger_spread > palm_width * 1.8:
+        return False
+
+    return True
+
+
 # 3. Open camera
 cam = cv.VideoCapture(0)
 if not cam.isOpened():
@@ -137,6 +294,13 @@ last_volume_action = 0
 VOLUME_COOLDOWN = 0.5
 VOLUME_STEP_PER_CIRCLE = 8
 
+# Fist play/pause
+FIST_COOLDOWN = 1.0
+FIST_HOLD_FRAMES = 3
+last_fist_action = 0
+fist_hold_frames = 0
+fist_fired_this_gesture = False
+
 prev_index_y = 0    
 # 4. Main loop 
 with HandLandmarker.create_from_options(options) as landmarker:
@@ -148,7 +312,7 @@ with HandLandmarker.create_from_options(options) as landmarker:
 
 
         # Flip the frame horizontally 
-        frame = cv.flip(frame,1)
+        frame = cv.flip(frame,1)    
 
 
         # Convert to mediapipe image 
@@ -157,6 +321,7 @@ with HandLandmarker.create_from_options(options) as landmarker:
         result = landmarker.detect(mp_image)
 
         # Detect hand to draw landmarks and move mouse 
+        frame_has_fist = False
         if result.hand_landmarks:
             for hand in result.hand_landmarks:
                 draw_landmarks(frame, hand)
@@ -182,6 +347,13 @@ with HandLandmarker.create_from_options(options) as landmarker:
 
                 index_history.append((indexTip_x, indexTip_y))
                 circle_gesture = detect_circle_gesture(index_history)
+
+                if is_fist(hand):
+                    frame_has_fist = True
+                    index_history.clear()
+                    playing = media_state_cache['playing']
+                    media_label = "PAUSE" if playing else "PLAY"
+                    draw_label(frame, media_label, indexTip_x, indexTip_y - 40, (255, 0, 255))
 
                 # Move the mouse pointer with smoothing 
                 cursor_x = max(0, min(screen_w, mapped_x))
@@ -224,11 +396,25 @@ with HandLandmarker.create_from_options(options) as landmarker:
                     delta_y = prev_index_y - indexTip_y
                     if abs(delta_y) > 5:
                         pyautogui.scroll(int(delta_y / 20))
-                    # ── NEW ── scroll indicator
                     cv.putText(frame, "SCROLL", (indexTip_x - 30, indexTip_y - 20),
                                cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
                     
                 prev_index_y = indexTip_y
+        if frame_has_fist:
+            fist_hold_frames += 1
+            now = time.time()
+            if (
+                fist_hold_frames >= FIST_HOLD_FRAMES
+                and not fist_fired_this_gesture
+                and now - last_fist_action > FIST_COOLDOWN
+            ):
+                toggle_playing_media()
+                get_media_playback_state()
+                last_fist_action = now
+                fist_fired_this_gesture = True
+        else:
+            fist_hold_frames = 0
+            fist_fired_this_gesture = False
         cv.imshow('We Drew Hands', frame)
         if cv.waitKey(1) == ord('q'):
             print("\033[32mExiting.... \033[0m")
